@@ -1,0 +1,61 @@
+let imageModelURL = 'https://teachablemachine.withgoogle.com/models/5Ln7DuJZt/';
+
+let classifier, video;
+let label = "Standby";
+let confidence = 0.0;
+
+let currentSlide = 1;
+let totalSlides = 5;
+let canChange = true;
+
+function setup() {
+  createCanvas(640, 520);
+
+  video = createCapture(VIDEO);
+  video.size(640, 480);
+  video.hide();
+
+  classifier = ml5.imageClassifier(
+    imageModelURL + 'model.json',
+    video,
+    () => classifyVideo()
+  );
+}
+
+function classifyVideo() {
+  classifier.classify(gotResult);
+}
+
+function gotResult(err, res) {
+  if (err) {
+    console.error(err);
+    return;
+  }
+
+  if (res && res.length > 0) {
+    label = res[0].label;
+    confidence = res[0].confidence;
+
+    handleNavigation();
+  }
+
+  classifyVideo();
+}
+
+function handleNavigation() {
+  if (!canChange) return;
+
+  // Add your gesture-to-slide navigation logic here.
+}
+
+function draw() {
+  background(25);
+
+  image(video, 0, 0, 320, 240);
+
+  fill(255);
+  textSize(18);
+  text("Detected: " + label, 20, 280);
+  text("Confidence: " + (confidence * 100).toFixed(1) + "%", 20, 310);
+  text("Current Slide: " + currentSlide, 20, 340);
+}
