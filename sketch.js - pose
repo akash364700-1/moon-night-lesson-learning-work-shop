@@ -1,0 +1,177 @@
+const poseModelURL =
+  "https://teachablemachine.withgoogle.com/models/ro2zlLy7R/";
+
+let model, video, osc;
+
+let detectedPose = "Loading...";
+let confidence = 0;
+let soundEnabled = false;
+let busy = false;
+let errorMessage = "";
+
+let probabilityHistory = [];
+let candidatePose = "";
+let candidateCount = 0;
+let stablePose = "";
+let lastSoundPose = "";
+
+const CONFIDENCE_LIMIT = 0.70;
+const HISTORY_SIZE = 5;
+const REQUIRED_STREAK = 3;
+
+const poseSounds = {
+  "left arm high": 261.63,
+  "right arm high": 329.63,
+  "both arms crossed": 392.00
+};
+
+async function setup() {
+  createCanvas(640, 500);
+
+  video = createCapture(VIDEO);
+  video.size(320, 240);
+  video.hide();
+
+  osc = new p5.Oscillator("sine");
+  osc.start();
+  osc.amp(0);
+
+  try {
+    model = await tmPose.load(
+      poseModelURL + "model.json",
+      poseModelURL + "metadata.json"
+    );
+
+    detectedPose = "Show a pose";
+    classifyPose();
+  } catch (err) {
+    console.error(err);
+    errorMessage = "Model loading failed";
+    detectedPose = errorMessage;
+  }
+}
+
+async function classifyPose() {
+  if (!model || busy) return;
+
+  busy = true;
+
+  try {
+    const result = await model.estimatePose(video.elt);
+    const predictions = await model.predict(result.posenetOutput);
+
+    // Keep a short history of predictions
+    probabilityHistory.push(predictions);
+
+    if (probabilityHistory.length > HISTORY_SIZE) {
+      probabilityHistory.shift();
+    }
+
+    // Average each class probability across recent frames
+    const averageScores = {};
+
+    for (const prediction of predictions) {
+      const key = prediction.className.trim().toLowerCase();
+
+      averageScores[key] = 0;
+
+      for (const frame of probabilityHistory) {
+        const match = frame.find(
+          p => p.className.trim().toLowerCase() === key
+        );
+
+        averageScores[key] += match ? match.probability : 0;
+      }
+
+      averageScores[key] /= probabilityHistory.length;
+    }
+
+    const ranked = Object.entries(averageScores)
+      .sort((a, b) => b[1] - a[1]);
+
+    if (ranked.length) {
+      const [bestPose, bestScore] = ranked[0];
+
+      confidence = bestScore;
+      detectedPose = bestPose;
+
+      if (bestScore >= CONFIDENCE_LIMIT) {
+        if (candidatePose === bestPose) {
+          candidateCount++;
+        } else {
+          candidatePose = bestPose;
+          candidateCount = 1;
+        }
+
+        // Accept only repeated, confident predictions
+        if (candidateCount >= REQUIRED_STREAK) {
+          stablePose = bestPose;
+          updateSound();
+        }
+      } else {
+        candidatePose = "";
+        candidateCount = 0;
+      }
+    }
+  } catch (err) {
+    console.error("Prediction error:", err);
+    errorMessage = "Prediction error - check Console";
+  } finally {
+    busy = false;
+    setTimeout(classifyPose, 100);
+  }
+}
+
+function updateSound() {
+  if (!soundEnabled) return;
+
+  // Neutral or unrecognized poses stay silent
+  const frequency = poseSounds[stablePose];
+
+  if (frequency === undefined) {
+    osc.amp(0, 0.15);
+    lastSoundPose = stablePose;
+    return;
+  }
+
+  // Don't restart the same note every frame
+  if (stablePose === lastSoundPose) return;
+
+  lastSoundPose = stablePose;
+  osc.freq(frequency);
+  osc.amp(0.10, 0.15);
+}
+
+function mousePressed() {
+  userStartAudio();
+  soundEnabled = true;
+  updateSound();
+}
+
+function draw() {
+  background(24);
+
+  image(video, 20, 20, 320, 240);
+
+  fill(255);
+  textSize(22);
+  text("POSE DETECTION", 20, 290);
+
+  textSize(17);
+  text("Detected: " + detectedPose, 20, 325);
+  text("Accepted pose: " + (stablePose || "Waiting..."), 20, 355);
+
+  text(
+    "Confidence: " + (confidence * 100).toFixed(1) + "%",
+    20, 385
+  );
+
+  text(
+    soundEnabled ? "Sound: ON" : "Click canvas to enable sound",
+    20, 420
+  );
+
+  if (errorMessage) {
+    text(errorMessage, 20, 455);
+  }
+}
